@@ -217,14 +217,14 @@ function Index() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="limit">Max results to scan</Label>
+                <Label htmlFor="maxScrapes">Max articles to scrape</Label>
                 <Input
-                  id="limit"
+                  id="maxScrapes"
                   type="number"
-                  min={1}
-                  max={40}
-                  value={limit}
-                  onChange={(e) => setLimit(Number(e.target.value) || 20)}
+                  min={5}
+                  max={200}
+                  value={maxScrapes}
+                  onChange={(e) => setMaxScrapes(Number(e.target.value) || 80)}
                 />
               </div>
             </div>

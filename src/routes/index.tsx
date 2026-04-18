@@ -254,21 +254,30 @@ function Index() {
             <CardTitle>
               Results {articles.length > 0 && `(${articles.length})`}
             </CardTitle>
+            {stats && (
+              <p className="text-xs text-muted-foreground">
+                Scanned {stats.sitemapsScanned} monthly sitemap(s) ·{" "}
+                {stats.urlsInRange} articles in range · {stats.slugMatches}{" "}
+                slug-matches · {stats.firecrawlHits} extra from Firecrawl ·{" "}
+                {stats.candidatesScraped} scraped · {stats.matched} matched
+              </p>
+            )}
           </CardHeader>
           <CardContent>
             {loading ? (
               <div className="flex items-center justify-center py-12 text-muted-foreground">
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                Searching and scraping rr.pt…
+                Scanning sitemaps and scraping rr.pt… this can take a minute.
               </div>
             ) : articles.length ? (
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-[40%]">Title</TableHead>
+                      <TableHead className="w-[38%]">Title</TableHead>
                       <TableHead>Author</TableHead>
                       <TableHead>Date</TableHead>
+                      <TableHead>Matched in</TableHead>
                       <TableHead>Link</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -280,9 +289,10 @@ function Index() {
                         </TableCell>
                         <TableCell>{a.author || "—"}</TableCell>
                         <TableCell className="whitespace-nowrap">
-                          {a.date
-                            ? format(new Date(a.date), "yyyy-MM-dd")
-                            : "—"}
+                          {a.date ? format(new Date(a.date), "yyyy-MM-dd") : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {a.matchedIn}
                         </TableCell>
                         <TableCell>
                           <a

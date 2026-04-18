@@ -91,9 +91,10 @@ function Index() {
   const [keywordsInput, setKeywordsInput] = useState("");
   const [startDate, setStartDate] = useState<Date | undefined>();
   const [endDate, setEndDate] = useState<Date | undefined>();
-  const [limit, setLimit] = useState(20);
+  const [maxScrapes, setMaxScrapes] = useState(80);
   const [loading, setLoading] = useState(false);
   const [articles, setArticles] = useState<Article[]>([]);
+  const [stats, setStats] = useState<Record<string, number> | null>(null);
   const [searched, setSearched] = useState(false);
 
   const handleSearch = async () => {
@@ -113,14 +114,18 @@ function Index() {
           keywords,
           startDate: startDate ? format(startDate, "yyyy-MM-dd") : undefined,
           endDate: endDate ? format(endDate, "yyyy-MM-dd") : undefined,
-          limit,
+          maxScrapes,
         },
       });
-      setArticles(result);
-      toast.success(`Found ${result.length} matching article(s)`);
+      setArticles(result.articles);
+      setStats(result.stats);
+      toast.success(
+        `Found ${result.articles.length} matching article(s) — scanned ${result.stats.urlsInRange} URLs in date range`,
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Search failed");
       setArticles([]);
+      setStats(null);
     } finally {
       setLoading(false);
     }
@@ -179,8 +184,9 @@ function Index() {
           <CardHeader>
             <CardTitle>Search</CardTitle>
             <CardDescription>
-              Comma-separated keywords (matches any). Searches rr.pt and filters
-              by article body + publication date.
+              Comma-separated keywords (matches any). Discovers articles via
+              rr.pt monthly sitemaps + Firecrawl search, then matches keywords
+              against title, URL, meta description and full body.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -212,14 +218,14 @@ function Index() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="limit">Max results to scan</Label>
+                <Label htmlFor="maxScrapes">Max articles to scrape</Label>
                 <Input
-                  id="limit"
+                  id="maxScrapes"
                   type="number"
-                  min={1}
-                  max={40}
-                  value={limit}
-                  onChange={(e) => setLimit(Number(e.target.value) || 20)}
+                  min={5}
+                  max={200}
+                  value={maxScrapes}
+                  onChange={(e) => setMaxScrapes(Number(e.target.value) || 80)}
                 />
               </div>
             </div>
@@ -249,21 +255,30 @@ function Index() {
             <CardTitle>
               Results {articles.length > 0 && `(${articles.length})`}
             </CardTitle>
+            {stats && (
+              <p className="text-xs text-muted-foreground">
+                Scanned {stats.sitemapsScanned} monthly sitemap(s) ·{" "}
+                {stats.urlsInRange} articles in range · {stats.slugMatches}{" "}
+                slug-matches · {stats.firecrawlHits} extra from Firecrawl ·{" "}
+                {stats.candidatesScraped} scraped · {stats.matched} matched
+              </p>
+            )}
           </CardHeader>
           <CardContent>
             {loading ? (
               <div className="flex items-center justify-center py-12 text-muted-foreground">
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                Searching and scraping rr.pt…
+                Scanning sitemaps and scraping rr.pt… this can take a minute.
               </div>
             ) : articles.length ? (
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-[40%]">Title</TableHead>
+                      <TableHead className="w-[38%]">Title</TableHead>
                       <TableHead>Author</TableHead>
                       <TableHead>Date</TableHead>
+                      <TableHead>Matched in</TableHead>
                       <TableHead>Link</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -275,9 +290,10 @@ function Index() {
                         </TableCell>
                         <TableCell>{a.author || "—"}</TableCell>
                         <TableCell className="whitespace-nowrap">
-                          {a.date
-                            ? format(new Date(a.date), "yyyy-MM-dd")
-                            : "—"}
+                          {a.date ? format(new Date(a.date), "yyyy-MM-dd") : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {a.matchedIn}
                         </TableCell>
                         <TableCell>
                           <a

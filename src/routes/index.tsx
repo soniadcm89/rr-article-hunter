@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import { CalendarIcon, Download, Loader2, Search, Newspaper } from "lucide-react";
 import ExcelJS from "exceljs";
 
+import { searchArticles, type Article } from "@/server/searchArticles";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

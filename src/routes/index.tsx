@@ -51,15 +51,6 @@ export const Route = createFileRoute("/")({
   }),
   component: Index,
 });
-
-type Article = {
-  url: string;
-  title: string;
-  author: string;
-  date: string;
-  snippet: string;
-};
-
 function DatePick({
   date,
   setDate,

@@ -184,8 +184,9 @@ function Index() {
           <CardHeader>
             <CardTitle>Search</CardTitle>
             <CardDescription>
-              Comma-separated keywords (matches any). Searches rr.pt and filters
-              by article body + publication date.
+              Comma-separated keywords (matches any). Discovers articles via
+              rr.pt monthly sitemaps + Firecrawl search, then matches keywords
+              against title, URL, meta description and full body.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

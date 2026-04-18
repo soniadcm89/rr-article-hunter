@@ -108,20 +108,16 @@ function Index() {
     setLoading(true);
     setSearched(true);
     try {
-      const res = await fetch("/api/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const result = await searchArticles({
+        data: {
           keywords,
           startDate: startDate ? format(startDate, "yyyy-MM-dd") : undefined,
           endDate: endDate ? format(endDate, "yyyy-MM-dd") : undefined,
           limit,
-        }),
+        },
       });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Search failed");
-      setArticles(data.articles);
-      toast.success(`Found ${data.articles.length} matching article(s)`);
+      setArticles(result);
+      toast.success(`Found ${result.length} matching article(s)`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Search failed");
       setArticles([]);

@@ -91,9 +91,10 @@ function Index() {
   const [keywordsInput, setKeywordsInput] = useState("");
   const [startDate, setStartDate] = useState<Date | undefined>();
   const [endDate, setEndDate] = useState<Date | undefined>();
-  const [limit, setLimit] = useState(20);
+  const [maxScrapes, setMaxScrapes] = useState(80);
   const [loading, setLoading] = useState(false);
   const [articles, setArticles] = useState<Article[]>([]);
+  const [stats, setStats] = useState<Record<string, number> | null>(null);
   const [searched, setSearched] = useState(false);
 
   const handleSearch = async () => {
@@ -113,14 +114,18 @@ function Index() {
           keywords,
           startDate: startDate ? format(startDate, "yyyy-MM-dd") : undefined,
           endDate: endDate ? format(endDate, "yyyy-MM-dd") : undefined,
-          limit,
+          maxScrapes,
         },
       });
-      setArticles(result);
-      toast.success(`Found ${result.length} matching article(s)`);
+      setArticles(result.articles);
+      setStats(result.stats);
+      toast.success(
+        `Found ${result.articles.length} matching article(s) — scanned ${result.stats.urlsInRange} URLs in date range`,
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Search failed");
       setArticles([]);
+      setStats(null);
     } finally {
       setLoading(false);
     }

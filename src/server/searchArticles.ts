@@ -233,10 +233,17 @@ export const searchArticles = createServerFn({ method: "POST" })
             }
           }
         } catch (err) {
+          if (isCreditsErr(err)) insufficientCredits = true;
           console.error("firecrawl search failed for", kw, err);
         }
       }),
     );
+
+    if (insufficientCredits) {
+      throw new Error(
+        "Firecrawl is out of credits (HTTP 402). The managed connection needs to be topped up or upgraded — reconnect with the email that owns the connection and apply coupon LOVABLE50 for 50% off the first 3 months.",
+      );
+    }
 
     /* ---------- 4. Build final candidate set ---------- */
 

@@ -173,6 +173,10 @@ export const searchArticles = createServerFn({ method: "POST" })
     const { keywords, startDate, endDate, maxScrapes } = data;
     const normKeywords = keywords.map(normalize).filter(Boolean);
     const firecrawl = new Firecrawl({ apiKey });
+    let insufficientCredits = false;
+    const isCreditsErr = (e: any) =>
+      typeof e?.message === "string" &&
+      /insufficient credits|payment required|402/i.test(e.message);
 
     /* ---------- 1. Discover candidate URLs from monthly sitemaps ---------- */
 

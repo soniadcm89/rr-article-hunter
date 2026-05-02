@@ -323,9 +323,9 @@ export const searchArticles = createServerFn({ method: "POST" })
     );
 
     /* 2. Sitemap supplement — slug matches in date range */
-    const end = endDate ? new Date(endDate) : new Date();
+    const end = endDate ? parseDateOnly(endDate) || new Date() : new Date();
     const start = startDate
-      ? new Date(startDate)
+      ? parseDateOnly(startDate) || new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1))
       : new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 5, 1));
 
     const wantedMonths = new Set(monthsBetween(start, end));

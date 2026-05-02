@@ -62,12 +62,13 @@ function monthsBetween(start: Date, end: Date): string[] {
   return out;
 }
 
-async function fetchText(url: string): Promise<string> {
+async function fetchText(url: string, extraHeaders?: Record<string, string>): Promise<string> {
   const res = await fetch(url, {
     headers: {
       "User-Agent": UA,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
+      ...(extraHeaders || {}),
     },
   });
   if (!res.ok) throw new Error(`${url} -> ${res.status}`);
@@ -94,6 +95,59 @@ function slugTextFromUrl(url: string): string {
   const m = url.match(/\/(\d{4})\/(\d{2})\/(\d{2})\/([^/]+)\/(\d+)\//);
   if (!m) return url;
   return m[4].replace(/-/g, " ");
+}
+
+/* ------------------------- DuckDuckGo search ------------------------ */
+
+function decodeDdgUrl(href: string): string | null {
+  // DDG wraps results as //duckduckgo.com/l/?uddg=<encoded>&...
+  const m = href.match(/[?&]uddg=([^&]+)/);
+  if (m) {
+    try {
+      return decodeURIComponent(m[1]);
+    } catch {
+      return null;
+    }
+  }
+  if (href.startsWith("http")) return href;
+  if (href.startsWith("//")) return "https:" + href;
+  return null;
+}
+
+async function ddgSearch(keyword: string, maxPages = 5): Promise<string[]> {
+  const found = new Set<string>();
+  for (let page = 0; page < maxPages; page++) {
+    const offset = page * 30;
+    const q = encodeURIComponent(`site:rr.pt ${keyword}`);
+    const url =
+      page === 0
+        ? `https://html.duckduckgo.com/html/?q=${q}`
+        : `https://html.duckduckgo.com/html/?q=${q}&s=${offset}&dc=${offset + 1}`;
+    let html: string;
+    try {
+      html = await fetchText(url, { Referer: "https://html.duckduckgo.com/" });
+    } catch (err) {
+      console.error("ddg fetch failed", url, err);
+      break;
+    }
+    const before = found.size;
+    const hrefs = Array.from(html.matchAll(/href="([^"]+)"/g)).map((m) => m[1]);
+    for (const h of hrefs) {
+      const decoded = decodeDdgUrl(h);
+      if (!decoded) continue;
+      if (!/^https?:\/\/(www\.)?rr\.pt\//.test(decoded)) continue;
+      // only article URLs (have a date segment)
+      if (!/\/\d{4}\/\d{2}\/\d{2}\//.test(decoded)) continue;
+      // strip query/hash
+      const clean = decoded.split("#")[0].split("?")[0];
+      found.add(clean);
+    }
+    // if no new results, stop paginating
+    if (found.size === before) break;
+    // small delay between pages
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return Array.from(found);
 }
 
 /* ----------------------- HTML parsing helpers ----------------------- */
@@ -127,7 +181,6 @@ function getMeta(html: string, attr: "name" | "property", value: string): string
   );
   const m = html.match(re);
   if (m) return decodeEntities(m[1]).trim();
-  // try reverse order content-first
   const re2 = new RegExp(
     `<meta[^>]*content=["']([^"']*)["'][^>]*${attr}=["']${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`,
     "i",
@@ -160,7 +213,6 @@ function getAuthor(html: string, bodyText: string): string {
     getMeta(html, "property", "article:author") ||
     getMeta(html, "name", "dc.creator");
   if (m) return m.replace(/^https?:\/\/\S+\/?/, "").replace(/^@/, "");
-  // look for byline pattern in first part of body
   const byline = bodyText
     .slice(0, 2000)
     .match(/\bPor\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\wÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç'.\- ]{2,80})/);
@@ -183,7 +235,6 @@ function getPublishDate(html: string, urlFallback: string): string {
       if (!isNaN(d.getTime())) return d.toISOString();
     }
   }
-  // <time datetime="...">
   const tm = html.match(/<time[^>]*datetime=["']([^"']+)["']/i);
   if (tm) {
     const d = new Date(tm[1]);
@@ -206,7 +257,7 @@ function validate(input: unknown): SearchInput {
   if (!keywords.length) throw new Error("Provide at least one keyword");
   const startDate = typeof i.startDate === "string" ? i.startDate : undefined;
   const endDate = typeof i.endDate === "string" ? i.endDate : undefined;
-  const rawMax = typeof i.maxScrapes === "number" ? i.maxScrapes : 80;
+  const rawMax = typeof i.maxScrapes === "number" ? i.maxScrapes : 200;
   const maxScrapes = Math.min(Math.max(rawMax, 5), 500);
   return { keywords, startDate, endDate, maxScrapes };
 }
@@ -217,34 +268,48 @@ export const searchArticles = createServerFn({ method: "POST" })
     const { keywords, startDate, endDate, maxScrapes } = data;
     const normKeywords = keywords.map(normalize).filter(Boolean);
 
-    /* 1. Discover URLs from monthly sitemaps */
+    /* 1. Discover URLs from DuckDuckGo (full-text) per keyword */
+    const ddgResults = await Promise.all(
+      keywords.map((k) => ddgSearch(k).catch((err) => {
+        console.error("ddgSearch failed for", k, err);
+        return [] as string[];
+      })),
+    );
+    const ddgUrls = Array.from(new Set(ddgResults.flat()));
+    const ddgInRange = ddgUrls.filter((u) =>
+      inDateRange(dateFromUrl(u), startDate, endDate),
+    );
+
+    /* 2. Sitemap supplement — slug matches in date range */
     const end = endDate ? new Date(endDate) : new Date();
     const start = startDate
       ? new Date(startDate)
       : new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 5, 1));
 
     const wantedMonths = new Set(monthsBetween(start, end));
-    const allSitemaps = await fetchSitemapIndex();
-    const targetSitemaps = allSitemaps.filter((u) => {
-      const m = u.match(/sitemap-(\d{4}-\d{2})\.xml$/);
-      return m ? wantedMonths.has(m[1]) : false;
-    });
+    let targetSitemaps: string[] = [];
+    let inRangeUrls: string[] = [];
+    let slugMatches: string[] = [];
+    try {
+      const allSitemaps = await fetchSitemapIndex();
+      targetSitemaps = allSitemaps.filter((u) => {
+        const m = u.match(/sitemap-(\d{4}-\d{2})\.xml$/);
+        return m ? wantedMonths.has(m[1]) : false;
+      });
+      const sitemapResults = await Promise.all(targetSitemaps.map(fetchSitemapUrls));
+      const allUrls = Array.from(new Set(sitemapResults.flat()));
+      inRangeUrls = allUrls.filter((u) =>
+        inDateRange(dateFromUrl(u), startDate, endDate),
+      );
+      slugMatches = inRangeUrls.filter((u) => {
+        const slug = normalize(slugTextFromUrl(u));
+        return normKeywords.some((k) => slug.includes(k));
+      });
+    } catch (err) {
+      console.error("sitemap fetch failed", err);
+    }
 
-    const sitemapResults = await Promise.all(targetSitemaps.map(fetchSitemapUrls));
-    const allUrls = Array.from(new Set(sitemapResults.flat()));
-    const inRangeUrls = allUrls.filter((u) =>
-      inDateRange(dateFromUrl(u), startDate, endDate),
-    );
-
-    /* 2. Slug pre-filter */
-    const slugMatches = inRangeUrls.filter((u) => {
-      const slug = normalize(slugTextFromUrl(u));
-      return normKeywords.some((k) => slug.includes(k));
-    });
-    const slugMatchSet = new Set(slugMatches);
-    const others = inRangeUrls.filter((u) => !slugMatchSet.has(u));
-
-    /* 3. Build candidate list — slug matches first, then sample others up to budget */
+    /* 3. Build candidate list — DDG hits first, then sitemap slug matches */
     const candidates: string[] = [];
     const seen = new Set<string>();
     const push = (u: string) => {
@@ -253,11 +318,11 @@ export const searchArticles = createServerFn({ method: "POST" })
         candidates.push(u);
       }
     };
+    ddgInRange.forEach(push);
     slugMatches.forEach(push);
-    others.forEach(push);
     const toScrape = candidates.slice(0, maxScrapes);
 
-    /* 4. Fetch each article HTML and match */
+    /* 4. Fetch each article HTML and verify match */
     const articles: Article[] = [];
     const concurrency = 10;
     let cursor = 0;
@@ -313,7 +378,7 @@ export const searchArticles = createServerFn({ method: "POST" })
         sitemapsScanned: targetSitemaps.length,
         urlsInRange: inRangeUrls.length,
         slugMatches: slugMatches.length,
-        firecrawlHits: 0,
+        ddgHits: ddgInRange.length,
         candidatesScraped: toScrape.length,
         matched: articles.length,
         fetchErrors,

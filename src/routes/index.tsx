@@ -91,7 +91,7 @@ function Index() {
   const [keywordsInput, setKeywordsInput] = useState("");
   const [startDate, setStartDate] = useState<Date | undefined>();
   const [endDate, setEndDate] = useState<Date | undefined>();
-  const [maxScrapes, setMaxScrapes] = useState(80);
+  const [maxScrapes, setMaxScrapes] = useState(200);
   const [loading, setLoading] = useState(false);
   const [articles, setArticles] = useState<Article[]>([]);
   const [stats, setStats] = useState<Record<string, number> | null>(null);
@@ -185,8 +185,9 @@ function Index() {
             <CardTitle>Search</CardTitle>
             <CardDescription>
               Comma-separated keywords (matches any). Discovers articles via
-              rr.pt monthly sitemaps + Firecrawl search, then matches keywords
-              against title, URL, meta description and full body.
+              full-text search (DuckDuckGo · site:rr.pt) plus rr.pt monthly
+              sitemaps for fresh items, then scrapes each candidate to verify
+              matches against title, URL, meta description and full body.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -257,10 +258,10 @@ function Index() {
             </CardTitle>
             {stats && (
               <p className="text-xs text-muted-foreground">
-                Scanned {stats.sitemapsScanned} monthly sitemap(s) ·{" "}
-                {stats.urlsInRange} articles in range · {stats.slugMatches}{" "}
-                slug-matches · {stats.firecrawlHits} extra from Firecrawl ·{" "}
-                {stats.candidatesScraped} scraped · {stats.matched} matched
+                {stats.ddgHits} DuckDuckGo hit(s) · {stats.sitemapsScanned}{" "}
+                sitemap(s) · {stats.urlsInRange} articles in range ·{" "}
+                {stats.slugMatches} slug-matches · {stats.candidatesScraped}{" "}
+                scraped · {stats.matched} matched
               </p>
             )}
           </CardHeader>

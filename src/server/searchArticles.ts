@@ -33,6 +33,45 @@ function matchKeywords(text: string, normKeywords: string[]): string[] {
   return normKeywords.filter((k) => k && hay.includes(k));
 }
 
+function expandKeyword(raw: string): string[] {
+  const base = normalize(raw.trim());
+  const variants = new Set<string>([base]);
+
+  // RR/manual search often treats Portuguese abstract nouns broadly.
+  // Example: searching "sexualidade" should also find "educação sexual",
+  // "violência sexual", etc., which are otherwise missed by exact matching.
+  if (base.endsWith("idades") && base.length > 9) {
+    variants.add(base.slice(0, -6));
+  } else if (base.endsWith("idade") && base.length > 8) {
+    variants.add(base.slice(0, -5));
+  }
+
+  return Array.from(variants).filter((k) => k.length >= 4);
+}
+
+function parseDateOnly(dateStr: string): Date | null {
+  if (!dateStr) return null;
+
+  const iso = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    const result = new Date(Date.UTC(+iso[1], +iso[2] - 1, +iso[3]));
+    if (result.getUTCDate() !== +iso[3] || result.getUTCMonth() !== +iso[2] - 1) return null;
+    return result;
+  }
+
+  const dmy = dateStr.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (dmy) {
+    const day = +dmy[1];
+    const month = +dmy[2];
+    const year = +dmy[3] < 100 ? +dmy[3] + 2000 : +dmy[3];
+    const result = new Date(Date.UTC(year, month - 1, day));
+    if (result.getUTCDate() !== day || result.getUTCMonth() !== month - 1) return null;
+    return result;
+  }
+
+  return null;
+}
+
 function dateFromUrl(url: string): string {
   const m = url.match(/\/(\d{4})\/(\d{2})\/(\d{2})\//);
   if (!m) return "";
@@ -42,10 +81,13 @@ function dateFromUrl(url: string): string {
 function inDateRange(iso: string, start?: string, end?: string): boolean {
   if (!start && !end) return true;
   if (!iso) return false;
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return false;
-  if (start && t < new Date(start + "T00:00:00Z").getTime()) return false;
-  if (end && t > new Date(end + "T23:59:59Z").getTime()) return false;
+  const articleDate = parseDateOnly(iso);
+  if (!articleDate) return false;
+  const t = articleDate.getTime();
+  const startDate = start ? parseDateOnly(start) : null;
+  const endDate = end ? parseDateOnly(end) : null;
+  if (startDate && t < startDate.getTime()) return false;
+  if (endDate && t > endDate.getTime()) return false;
   return true;
 }
 

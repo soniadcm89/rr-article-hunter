@@ -308,11 +308,11 @@ export const searchArticles = createServerFn({ method: "POST" })
   .inputValidator(validate)
   .handler(async ({ data }): Promise<{ articles: Article[]; stats: any }> => {
     const { keywords, startDate, endDate, maxScrapes } = data;
-    const normKeywords = keywords.map(normalize).filter(Boolean);
+    const normKeywords = Array.from(new Set(keywords.flatMap(expandKeyword)));
 
     /* 1. Discover URLs from DuckDuckGo (full-text) per keyword */
     const ddgResults = await Promise.all(
-      keywords.map((k) => ddgSearch(k).catch((err) => {
+      normKeywords.map((k) => ddgSearch(k).catch((err) => {
         console.error("ddgSearch failed for", k, err);
         return [] as string[];
       })),

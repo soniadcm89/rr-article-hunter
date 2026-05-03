@@ -1,5 +1,7 @@
 rr.pt Article Scraper
+
 How the scraper discovers, verifies, and returns articles — end-to-end technical explanation
+
 1. What the tool does
 The application searches for articles published on rr.pt (Rádio Renascença) that match one or more keywords within a user-defined date range, then exports the results to Excel. It is a server-side scraper: all network calls and HTML parsing happen on the server, and only the final list of matching articles is returned to the browser.
 The user provides three inputs:

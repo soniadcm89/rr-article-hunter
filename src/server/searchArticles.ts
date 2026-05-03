@@ -139,6 +139,25 @@ function slugTextFromUrl(url: string): string {
   return m[4].replace(/-/g, " ");
 }
 
+function extractRelatedLinks(html: string): string[] {
+  const idx = html.search(/id=["']contentTopicos["']/i);
+  const scope = idx >= 0 ? html.slice(idx, idx + 200000) : html;
+  const out = new Set<string>();
+  const re = /href=['"]([^'"]+)['"]/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(scope)) !== null) {
+    let href = m[1].trim();
+    if (!href) continue;
+    if (href.startsWith("//")) href = "https:" + href;
+    else if (href.startsWith("/")) href = "https://rr.pt" + href;
+    else if (!/^https?:\/\//i.test(href)) href = "https://rr.pt/" + href.replace(/^\.?\//, "");
+    if (!/^https?:\/\/(www\.)?rr\.pt\//i.test(href)) continue;
+    if (!/\/\d{4}\/\d{2}\/\d{2}\//.test(href)) continue;
+    out.add(href.split("#")[0].split("?")[0]);
+  }
+  return Array.from(out);
+}
+
 /* ------------------------- DuckDuckGo search ------------------------ */
 
 function decodeDdgUrl(href: string): string | null {

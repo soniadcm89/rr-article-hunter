@@ -263,7 +263,9 @@ function Index() {
                 {stats.ddgHits} DuckDuckGo hit(s) · {stats.sitemapsScanned}{" "}
                 sitemap(s) · {stats.urlsInRange} articles in range ·{" "}
                 {stats.slugMatches} slug-matches · {stats.candidatesScraped}{" "}
-                scraped · {stats.matched} matched
+                scraped · {stats.relatedScraped ?? 0} related scraped ·{" "}
+                {stats.relatedMatched ?? 0} related matched · {stats.matched}{" "}
+                total matched
               </p>
             )}
           </CardHeader>

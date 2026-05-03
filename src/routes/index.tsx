@@ -226,7 +226,7 @@ function Index() {
                   id="maxScrapes"
                   type="number"
                   min={5}
-                  max={200}
+                  max={500}
                   value={maxScrapes}
                   onChange={(e) => setMaxScrapes(Number(e.target.value) || 80)}
                 />

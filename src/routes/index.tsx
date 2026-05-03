@@ -186,8 +186,10 @@ function Index() {
             <CardDescription>
               Comma-separated keywords (matches any). Discovers articles via
               full-text search (DuckDuckGo · site:rr.pt) plus rr.pt monthly
-              sitemaps for fresh items, then scrapes each candidate to verify
-              matches against title, URL, meta description and full body.
+              sitemaps, then scrapes each candidate to verify matches against
+              title, URL, meta description and full body. Also follows each
+              match's "Saiba Mais" / Tópicos block one hop to surface related
+              articles within the same date range.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -224,7 +226,7 @@ function Index() {
                   id="maxScrapes"
                   type="number"
                   min={5}
-                  max={200}
+                  max={500}
                   value={maxScrapes}
                   onChange={(e) => setMaxScrapes(Number(e.target.value) || 80)}
                 />
@@ -261,7 +263,9 @@ function Index() {
                 {stats.ddgHits} DuckDuckGo hit(s) · {stats.sitemapsScanned}{" "}
                 sitemap(s) · {stats.urlsInRange} articles in range ·{" "}
                 {stats.slugMatches} slug-matches · {stats.candidatesScraped}{" "}
-                scraped · {stats.matched} matched
+                scraped · {stats.relatedScraped ?? 0} related scraped ·{" "}
+                {stats.relatedMatched ?? 0} related matched · {stats.matched}{" "}
+                total matched
               </p>
             )}
           </CardHeader>

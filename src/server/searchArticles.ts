@@ -139,6 +139,25 @@ function slugTextFromUrl(url: string): string {
   return m[4].replace(/-/g, " ");
 }
 
+function extractRelatedLinks(html: string): string[] {
+  const idx = html.search(/id=["']contentTopicos["']/i);
+  const scope = idx >= 0 ? html.slice(idx, idx + 200000) : html;
+  const out = new Set<string>();
+  const re = /href=['"]([^'"]+)['"]/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(scope)) !== null) {
+    let href = m[1].trim();
+    if (!href) continue;
+    if (href.startsWith("//")) href = "https:" + href;
+    else if (href.startsWith("/")) href = "https://rr.pt" + href;
+    else if (!/^https?:\/\//i.test(href)) href = "https://rr.pt/" + href.replace(/^\.?\//, "");
+    if (!/^https?:\/\/(www\.)?rr\.pt\//i.test(href)) continue;
+    if (!/\/\d{4}\/\d{2}\/\d{2}\//.test(href)) continue;
+    out.add(href.split("#")[0].split("?")[0]);
+  }
+  return Array.from(out);
+}
+
 /* ------------------------- DuckDuckGo search ------------------------ */
 
 function decodeDdgUrl(href: string): string | null {
@@ -366,52 +385,75 @@ export const searchArticles = createServerFn({ method: "POST" })
 
     /* 4. Fetch each article HTML and verify match */
     const articles: Article[] = [];
+    const scrapedUrls = new Set<string>();
+    const relatedSet = new Set<string>();
     const concurrency = 10;
-    let cursor = 0;
     let fetchErrors = 0;
 
-    async function worker() {
-      while (cursor < toScrape.length) {
-        const i = cursor++;
-        const url = toScrape[i];
-        try {
-          const html = await fetchText(url);
-          const title = getTitle(html);
-          const description = getDescription(html);
-          const bodyText = stripTags(html);
-          const slugText = slugTextFromUrl(url);
+    async function scrapePass(urls: string[], collectRelated: boolean) {
+      let cursor = 0;
+      async function worker() {
+        while (cursor < urls.length) {
+          const i = cursor++;
+          const url = urls[i];
+          if (scrapedUrls.has(url)) continue;
+          scrapedUrls.add(url);
+          try {
+            const html = await fetchText(url);
+            if (collectRelated) {
+              for (const r of extractRelatedLinks(html)) {
+                if (!scrapedUrls.has(r)) relatedSet.add(r);
+              }
+            }
+            const title = getTitle(html);
+            const description = getDescription(html);
+            const bodyText = stripTags(html);
+            const slugText = slugTextFromUrl(url);
 
-          const haystacks = [
-            { name: "title", text: title },
-            { name: "description", text: description },
-            { name: "url", text: slugText },
-            { name: "body", text: bodyText },
-          ];
-          const matchedIn: string[] = [];
-          for (const h of haystacks) {
-            if (matchKeywords(h.text, normKeywords).length) matchedIn.push(h.name);
+            const haystacks = [
+              { name: "title", text: title },
+              { name: "description", text: description },
+              { name: "url", text: slugText },
+              { name: "body", text: bodyText },
+            ];
+            const matchedIn: string[] = [];
+            for (const h of haystacks) {
+              if (matchKeywords(h.text, normKeywords).length) matchedIn.push(h.name);
+            }
+            if (!matchedIn.length) continue;
+
+            const dateIso = getPublishDate(html, dateFromUrl(url));
+            if (!inDateRange(dateIso, startDate, endDate)) continue;
+
+            articles.push({
+              url,
+              title: title.trim(),
+              author: getAuthor(html, bodyText),
+              date: dateIso,
+              snippet: (description || bodyText).replace(/\s+/g, " ").slice(0, 240),
+              matchedIn: matchedIn.join(", "),
+            });
+          } catch (err) {
+            fetchErrors++;
+            console.error("fetch failed", url, err);
           }
-          if (!matchedIn.length) continue;
-
-          const dateIso = getPublishDate(html, dateFromUrl(url));
-          if (!inDateRange(dateIso, startDate, endDate)) continue;
-
-          articles.push({
-            url,
-            title: title.trim(),
-            author: getAuthor(html, bodyText),
-            date: dateIso,
-            snippet: (description || bodyText).replace(/\s+/g, " ").slice(0, 240),
-            matchedIn: matchedIn.join(", "),
-          });
-        } catch (err) {
-          fetchErrors++;
-          console.error("fetch failed", url, err);
         }
       }
+      await Promise.all(Array.from({ length: concurrency }, worker));
     }
 
-    await Promise.all(Array.from({ length: concurrency }, worker));
+    await scrapePass(toScrape, true);
+    const matchedFirstPass = articles.length;
+
+    /* 5. Second pass — follow Saiba Mais / Tópicos one hop */
+    const maxRelated = Math.min(maxScrapes ?? 200, 500);
+    const relatedCandidates = Array.from(relatedSet)
+      .filter((u) => !scrapedUrls.has(u))
+      .filter((u) => inDateRange(dateFromUrl(u), startDate, endDate));
+    const relatedToScrape = relatedCandidates.slice(0, maxRelated);
+    await scrapePass(relatedToScrape, false);
+    const relatedMatched = articles.length - matchedFirstPass;
+
     articles.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
     return {
@@ -422,8 +464,12 @@ export const searchArticles = createServerFn({ method: "POST" })
         slugMatches: slugMatches.length,
         ddgHits: ddgInRange.length,
         candidatesScraped: toScrape.length,
+        relatedDiscovered: relatedCandidates.length,
+        relatedScraped: relatedToScrape.length,
+        relatedMatched,
         matched: articles.length,
         fetchErrors,
       },
     };
   });
+

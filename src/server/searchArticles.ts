@@ -446,7 +446,7 @@ export const searchArticles = createServerFn({ method: "POST" })
     const matchedFirstPass = articles.length;
 
     /* 5. Second pass — follow Saiba Mais / Tópicos one hop */
-    const maxRelated = Math.min(maxScrapes, 500);
+    const maxRelated = Math.min(maxScrapes ?? 200, 500);
     const relatedCandidates = Array.from(relatedSet)
       .filter((u) => !scrapedUrls.has(u))
       .filter((u) => inDateRange(dateFromUrl(u), startDate, endDate));

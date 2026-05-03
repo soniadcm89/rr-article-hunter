@@ -186,8 +186,10 @@ function Index() {
             <CardDescription>
               Comma-separated keywords (matches any). Discovers articles via
               full-text search (DuckDuckGo · site:rr.pt) plus rr.pt monthly
-              sitemaps for fresh items, then scrapes each candidate to verify
-              matches against title, URL, meta description and full body.
+              sitemaps, then scrapes each candidate to verify matches against
+              title, URL, meta description and full body. Also follows each
+              match's "Saiba Mais" / Tópicos block one hop to surface related
+              articles within the same date range.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">

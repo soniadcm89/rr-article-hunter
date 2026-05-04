@@ -28,25 +28,169 @@ function normalize(s: string): string {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-function matchKeywords(text: string, normKeywords: string[]): string[] {
-  const hay = normalize(text);
-  return normKeywords.filter((k) => k && hay.includes(k));
+const PT_STOPWORDS = new Set([
+  "de", "da", "do", "das", "dos", "e", "a", "o", "as", "os",
+  "em", "na", "no", "nas", "nos", "um", "uma", "para", "por", "com",
+]);
+
+function stemTerm(base: string): string[] {
+  // Variant expansion: "sexualidade" → also "sexual"
+  const variants = new Set<string>([base]);
+  if (base.endsWith("idades") && base.length > 9) variants.add(base.slice(0, -6));
+  else if (base.endsWith("idade") && base.length > 8) variants.add(base.slice(0, -5));
+  return Array.from(variants);
 }
 
-function expandKeyword(raw: string): string[] {
-  const base = normalize(raw.trim());
-  const variants = new Set<string>([base]);
+export type ParsedQuery = {
+  raw: string;
+  // OR-of-AND-clauses. Each AND-clause = list of required terms (single words or phrases).
+  // A term is matched if ANY of its variants appears in the haystack.
+  orGroups: { andTerms: { variants: string[]; display: string }[] }[];
+  notTerms: { variants: string[]; display: string }[];
+  // For DDG: one query per OR-group
+  ddgQueries: string[];
+  // Friendly summary chips for UI
+  summary: string[];
+};
 
-  // RR/manual search often treats Portuguese abstract nouns broadly.
-  // Example: searching "sexualidade" should also find "educação sexual",
-  // "violência sexual", etc., which are otherwise missed by exact matching.
-  if (base.endsWith("idades") && base.length > 9) {
-    variants.add(base.slice(0, -6));
-  } else if (base.endsWith("idade") && base.length > 8) {
-    variants.add(base.slice(0, -5));
+function makeTerm(rawTerm: string, isPhrase: boolean) {
+  const norm = normalize(rawTerm.trim());
+  if (!norm) return null;
+  // Phrases are not stemmed; single bare words are stemmed
+  const variants = isPhrase ? [norm] : stemTerm(norm);
+  return { variants, display: isPhrase ? `"${rawTerm.trim()}"` : rawTerm.trim() };
+}
+
+function tokenizeQuery(raw: string): { type: "TERM" | "PHRASE" | "AND" | "OR" | "NOT"; value: string }[] {
+  const tokens: { type: "TERM" | "PHRASE" | "AND" | "OR" | "NOT"; value: string }[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    const c = raw[i];
+    if (c === " " || c === "\t" || c === "\n") { i++; continue; }
+    if (c === '"') {
+      const end = raw.indexOf('"', i + 1);
+      if (end === -1) { tokens.push({ type: "TERM", value: raw.slice(i + 1) }); break; }
+      tokens.push({ type: "PHRASE", value: raw.slice(i + 1, end) });
+      i = end + 1;
+      continue;
+    }
+    let j = i;
+    while (j < raw.length && raw[j] !== " " && raw[j] !== "\t" && raw[j] !== '"') j++;
+    const word = raw.slice(i, j);
+    const upper = word.toUpperCase();
+    if (upper === "AND" || upper === "OR" || upper === "NOT") {
+      tokens.push({ type: upper as "AND" | "OR" | "NOT", value: word });
+    } else {
+      tokens.push({ type: "TERM", value: word });
+    }
+    i = j;
+  }
+  return tokens;
+}
+
+export function parseQuery(raw: string): ParsedQuery {
+  const trimmed = raw.trim();
+  const tokens = tokenizeQuery(trimmed);
+  const hasOperator = tokens.some((t) => t.type === "AND" || t.type === "OR" || t.type === "NOT");
+  const hasQuotes = tokens.some((t) => t.type === "PHRASE");
+
+  // Default: multi-word bare input with no operators/quotes → treat as a single phrase
+  if (!hasOperator && !hasQuotes) {
+    const bareTerms = tokens.filter((t) => t.type === "TERM").map((t) => t.value);
+    if (bareTerms.length === 0) {
+      return { raw: trimmed, orGroups: [], notTerms: [], ddgQueries: [], summary: [] };
+    }
+    if (bareTerms.length === 1) {
+      const term = makeTerm(bareTerms[0], false);
+      if (!term) return { raw: trimmed, orGroups: [], notTerms: [], ddgQueries: [], summary: [] };
+      return {
+        raw: trimmed,
+        orGroups: [{ andTerms: [term] }],
+        notTerms: [],
+        ddgQueries: [bareTerms[0]],
+        summary: [`term: ${term.display}`],
+      };
+    }
+    // multi-word → phrase
+    const phrase = bareTerms.join(" ");
+    const term = makeTerm(phrase, true);
+    if (!term) return { raw: trimmed, orGroups: [], notTerms: [], ddgQueries: [], summary: [] };
+    return {
+      raw: trimmed,
+      orGroups: [{ andTerms: [term] }],
+      notTerms: [],
+      ddgQueries: [`"${phrase}"`],
+      summary: [`phrase: "${phrase}"`],
+    };
   }
 
-  return Array.from(variants).filter((k) => k.length >= 4);
+  // Boolean parser: flat OR-of-ANDs, NOT applies to following term
+  const orGroups: { andTerms: { variants: string[]; display: string }[] }[] = [];
+  const notTerms: { variants: string[]; display: string }[] = [];
+  let currentAnd: { variants: string[]; display: string }[] = [];
+  let pendingNot = false;
+
+  const flushAnd = () => {
+    if (currentAnd.length) orGroups.push({ andTerms: currentAnd });
+    currentAnd = [];
+  };
+
+  for (const tok of tokens) {
+    if (tok.type === "OR") { flushAnd(); pendingNot = false; continue; }
+    if (tok.type === "AND") { pendingNot = false; continue; }
+    if (tok.type === "NOT") { pendingNot = true; continue; }
+    const isPhrase = tok.type === "PHRASE";
+    const term = makeTerm(tok.value, isPhrase);
+    if (!term) { pendingNot = false; continue; }
+    if (pendingNot) {
+      notTerms.push(term);
+      pendingNot = false;
+      continue;
+    }
+    // Stopword stripping inside AND clauses (only for bare single words, not phrases)
+    if (!isPhrase && PT_STOPWORDS.has(term.variants[0])) continue;
+    currentAnd.push(term);
+  }
+  flushAnd();
+
+  // Cap OR-groups at 4
+  const cappedOr = orGroups.slice(0, 4);
+
+  // Build DDG queries: one per OR-group
+  const ddgQueries = cappedOr.map((g) =>
+    g.andTerms.map((t) => {
+      const d = t.display;
+      // Quote phrases (display starts with ") or multi-word raw
+      if (d.startsWith('"')) return d;
+      if (d.includes(" ")) return `"${d}"`;
+      return d;
+    }).join(" "),
+  );
+
+  const summary: string[] = [];
+  cappedOr.forEach((g, i) => {
+    const parts = g.andTerms.map((t) => t.display).join(" AND ");
+    summary.push(cappedOr.length > 1 ? `OR#${i + 1}: ${parts}` : parts);
+  });
+  notTerms.forEach((t) => summary.push(`NOT ${t.display}`));
+
+  return { raw: trimmed, orGroups: cappedOr, notTerms, ddgQueries, summary };
+}
+
+function termInText(hay: string, term: { variants: string[] }): boolean {
+  return term.variants.some((v) => v && hay.includes(v));
+}
+
+function matchQueryInText(text: string, parsed: ParsedQuery): boolean {
+  if (!parsed.orGroups.length) return false;
+  const hay = normalize(text);
+  return parsed.orGroups.some((g) => g.andTerms.every((t) => termInText(hay, t)));
+}
+
+function notTermsHit(text: string, parsed: ParsedQuery): boolean {
+  if (!parsed.notTerms.length) return false;
+  const hay = normalize(text);
+  return parsed.notTerms.some((t) => termInText(hay, t));
 }
 
 function parseDateOnly(dateStr: string): Date | null {

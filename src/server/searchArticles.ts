@@ -617,6 +617,7 @@ export const searchArticles = createServerFn({ method: "POST" })
         relatedMatched,
         matched: articles.length,
         fetchErrors,
+        parsedQueries: parsedQueries.map((p) => ({ raw: p.raw, summary: p.summary })),
       },
     };
   });

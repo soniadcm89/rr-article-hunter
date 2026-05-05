@@ -94,7 +94,7 @@ function Index() {
   const [maxScrapes, setMaxScrapes] = useState(200);
   const [loading, setLoading] = useState(false);
   const [articles, setArticles] = useState<Article[]>([]);
-  const [stats, setStats] = useState<Record<string, number> | null>(null);
+  const [stats, setStats] = useState<Record<string, any> | null>(null);
   const [searched, setSearched] = useState(false);
 
   const handleSearch = async () => {

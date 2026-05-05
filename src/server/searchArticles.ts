@@ -471,11 +471,12 @@ export const searchArticles = createServerFn({ method: "POST" })
   .inputValidator(validate)
   .handler(async ({ data }): Promise<{ articles: Article[]; stats: any }> => {
     const { keywords, startDate, endDate, maxScrapes } = data;
-    const normKeywords = Array.from(new Set(keywords.flatMap(expandKeyword)));
+    const parsedQueries = keywords.map(parseQuery).filter((p) => p.orGroups.length > 0);
+    const ddgQueries = Array.from(new Set(parsedQueries.flatMap((p) => p.ddgQueries)));
 
-    /* 1. Discover URLs from DuckDuckGo (full-text) per keyword */
+    /* 1. Discover URLs from DuckDuckGo (full-text) per parsed query */
     const ddgResults = await Promise.all(
-      normKeywords.map((k) => ddgSearch(k).catch((err) => {
+      ddgQueries.map((k) => ddgSearch(k).catch((err) => {
         console.error("ddgSearch failed for", k, err);
         return [] as string[];
       })),

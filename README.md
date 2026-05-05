@@ -1,96 +1,158 @@
-rr.pt Article Scraper
+RR Article Hunter — How the app works
+A complete, end-to-end explanation of what the app does, how it discovers and verifies articles, the query language it understands, and its known limitations.
 
-How the scraper discovers, verifies, and returns articles — end-to-end technical explanation
+1. What the app does
+RR Article Hunter searches articles published on rr.pt (Rádio Renascença) that match one or more user-supplied queries within a date range, and lets the user export the results to Excel.
 
-1. What the tool does
-The application searches for articles published on rr.pt (Rádio Renascença) that match one or more keywords within a user-defined date range, then exports the results to Excel. It is a server-side scraper: all network calls and HTML parsing happen on the server, and only the final list of matching articles is returned to the browser.
-The user provides three inputs:
-•	One or more keywords (comma-separated).
-•	A start and end date (optional, but recommended).
-•	A maximum number of articles to scrape per pass (default 200, max 500).
-The output is a list of articles, each with URL, title, author, publish date, a snippet, and a tag indicating where the keyword was found (title, URL, description, or body).
+It is a server-side scraper: all network calls and HTML parsing run on the server (TanStack Start server functions on a Cloudflare Worker). The browser only receives the final, verified list of matching articles.
+
+The user provides:
+
+One or more queries, comma-separated. Each query can be a single keyword, a multi-word phrase, an exact-quoted phrase, or a boolean expression (see §3).
+Start and end dates (optional but strongly recommended).
+Max articles to scrape per pass (default 200, max 500).
+The output is a table where each row contains: URL, title, author, publish date, snippet, and a tag indicating where the match was found (title, URL, description, body) — plus an Export Excel button.
+
 2. The core problem
 rr.pt does not expose a public search API. Its on-site search is JavaScript-rendered and not directly scrapable. The site does, however, publish:
-•	A sitemap index (sitemapindex.xml) that links to monthly sitemaps.
-•	Monthly sitemaps that list every article URL, with the publish date encoded in the URL path (/YYYY/MM/DD/slug/id/).
-A typical month contains roughly 8,000 articles. Brute-force scraping every URL in a date window to check for keywords is not feasible on a serverless runtime — it would take many minutes per query and likely time out. We therefore need smarter discovery: ways to identify, before scraping, which URLs are likely to match.
-3. The four-stage pipeline
-Each search runs through four sequential stages: discovery, candidate building, verification (first pass), and related-article expansion (second pass).
+
+A sitemap index (sitemapindex.xml) listing monthly sitemaps.
+Monthly sitemaps containing every article URL, with the publish date encoded in the URL path: /YYYY/MM/DD/slug/id/.
+A typical month has ~8,000 articles. Brute-force scraping every URL in a date range would take many minutes and time out the serverless runtime. The app therefore relies on smart discovery to identify likely matches before scraping.
+
+3. The query language
+Each comma-separated query is parsed independently. The parser supports:
+
+Syntax	Behaviour
+cidadania	Single term. Includes -idade(s) stem expansion (e.g. sexualidade also matches sexual).
+aulas de cidadania	Multi-word bare input is treated as an exact phrase by default — fast and precise.
+"educação sexual"	Explicit exact phrase (quotes optional but supported).
+A AND B	Both terms must appear anywhere in the article.
+A OR B	Either term qualifies.
+A NOT B	A required, B forbidden.
+Mixed: "educação sexual" OR cidadania NOT autárquicas	Combined freely.
+Stopwords (de, da, do, e, a, o, em, na, no, para, por, com, …) are stripped only inside explicit AND clauses — never inside phrases or single bare words.
+
+OR-clause cap: max 4 OR groups per query, to bound the number of DuckDuckGo calls.
+
+Internal representation (after parseQuery):
+
+ParsedQuery = {
+  orGroups:  [{ andTerms: [{ variants, display }, …] }, …],
+  notTerms:  [{ variants, display }, …],
+  ddgQueries: string[],   // one per OR-group, phrases auto-quoted
+  summary:    string[]    // chips shown in the UI
+}
+The UI shows parsed-query chips below the input so users can confirm how their input was interpreted.
+
+4. The four-stage pipeline
+Every search runs through four sequential stages.
+
 Stage 1 — Discovery
-Two parallel sources are used to collect candidate URLs.
-3.1 DuckDuckGo full-text search
-DuckDuckGo's HTML endpoint (html.duckduckgo.com) is queried with site:rr.pt followed by the keyword. Because DuckDuckGo indexes the full body of each article, this returns URLs where the keyword appears anywhere on the page — title, body, or URL — not just in the slug.
-Implementation details:
-•	Queries are paginated (up to 5 pages, 30 results per page) until no new URLs appear.
-•	Results are wrapped in a redirect format (//duckduckgo.com/l/?uddg=...). The scraper decodes the uddg parameter to recover the original rr.pt URL.
-•	Only URLs matching https://rr.pt/ and containing a /YYYY/MM/DD/ date segment are kept (filters out tag pages, the homepage, etc.).
-•	A 250 ms delay is added between pages to be polite to the endpoint.
-•	If DuckDuckGo fails or returns nothing, the pipeline continues with sitemap-only discovery.
-3.2 Sitemap supplement
-DuckDuckGo's index lags real-time by hours or days for very fresh articles. To catch those, the scraper also reads rr.pt's monthly sitemaps:
-1.	Fetch sitemapindex.xml and identify the monthly sitemaps overlapping the user's date range.
-2.	Fetch each monthly sitemap in parallel and extract every article URL.
-3.	Filter to URLs whose date segment falls inside the user's date window.
-4.	From those, keep the ones whose URL slug contains any of the keywords (slug-matches). These are very high-confidence candidates.
+Two sources run in parallel.
+
+4.1 DuckDuckGo full-text search
+
+DuckDuckGo's HTML endpoint (html.duckduckgo.com) is queried with site:rr.pt <query>, one query per OR-group (phrases auto-quoted). DuckDuckGo indexes the article body, so it returns matches anywhere on the page — title, body, or URL.
+
+Paginated up to 5 pages × 30 results until no new URLs appear.
+Results are wrapped in a redirect (//duckduckgo.com/l/?uddg=…); the uddg param is decoded back to the original rr.pt URL.
+Only URLs matching https://rr.pt/ and containing /YYYY/MM/DD/ are kept (filters out tag pages, the homepage, etc.).
+250 ms delay between pages.
+If DuckDuckGo fails or returns nothing, the pipeline falls back to sitemap-only discovery.
+4.2 Sitemap supplement
+
+DuckDuckGo's index lags real-time by hours or days for very fresh articles. To catch those:
+
+Fetch sitemapindex.xml and identify monthly sitemaps overlapping the date range.
+Fetch each monthly sitemap in parallel and extract article URLs.
+Filter to URLs whose date segment falls inside the range.
+From those, run the slug through matchQueryInText for each parsed query — keep slug-matches as high-confidence candidates.
 Stage 2 — Candidate building
-DuckDuckGo URLs (filtered to date range) and sitemap slug-matches are merged and deduplicated. The merged list is capped at the user's “max articles to scrape” limit. This is the first-pass scrape list.
+DuckDuckGo URLs (filtered to date range) and sitemap slug-matches are merged, deduplicated, and capped at the user's maxScrapes limit. This is the first-pass scrape list.
+
 Stage 3 — Verification (first pass)
 Every candidate URL is fetched in parallel (10 concurrent workers). For each article, the scraper:
-1.	Downloads the HTML.
-2.	Extracts the title from <meta property="og:title"> (with fallbacks to <title> and twitter:title).
-3.	Extracts the meta description from og:description, name="description", or twitter:description.
-4.	Extracts the publish date from article:published_time and several other meta tags, falling back to the date in the URL.
-5.	Extracts the author from author / article:author meta tags, with a heuristic fallback that searches for “Por <Name>” in the first 2,000 characters of the body.
-6.	Strips all HTML tags to produce clean body text.
-It then runs the keyword check against four “haystacks” — title, description, URL slug, and body text — and records which ones matched. If none match, the article is discarded. The publish date is then re-checked against the user's date range. Only articles that pass both checks are added to the results.
-Stage 4 — Related-article expansion (second pass)
-Many rr.pt articles include a “Saiba Mais” / Tópicos block listing related stories. An article about “educação cidadã” may not contain the word “sexualidade” in its own text, but it will often link to articles about sexuality in its related-articles section — and rr.pt's own search treats it as a match for that reason.
-To capture this, while scraping each first-pass article the scraper also extracts every link inside the #contentTopicos block. After the first pass completes:
-5.	Related URLs already scraped are removed.
-1.	URLs whose date segment falls outside the user's date range are filtered out before any fetch (the URL alone tells us its date).
-2.	The remaining list is capped (default 200, max 500).
-3.	These URLs are scraped through the same worker pool, with the same keyword and date verification.
-Only one hop is followed. Going deeper would explode the candidate set without meaningfully improving recall.
-4. Date-range guarantees
-Articles outside the requested range never reach the results, regardless of how they were discovered. Two independent filters enforce this:
-•	Pre-fetch filter: URL date (parsed from /YYYY/MM/DD/) must fall inside the range. URLs that fail are dropped before any HTTP request.
-•	Post-fetch filter: the actual <meta article:published_time> from the HTML is parsed and re-checked against the range. Anything outside is discarded even if its URL date suggested otherwise.
-Date parsing uses UTC throughout to avoid timezone drift on day boundaries.
-5. Keyword matching
-Matching is case- and accent-insensitive. Both the keyword and the haystack are normalised by lowercasing and stripping diacritics (NFD + combining-mark removal). “Sexualidade”, “sexualidade”, and “SEXUALIDADE” all match the same way.
-Keyword expansion
-Portuguese abstract nouns ending in -idade often appear in articles only via their adjective root. To mirror how rr.pt's own search behaves, the scraper expands each keyword:
-•	“sexualidade” → also matches “sexual”
-•	“identidade” → also matches “ident” (rare, but kept for symmetry)
-Variants shorter than 4 characters are discarded to avoid noisy matches.
-6. HTML parsing
-Parsing is done with regular expressions rather than a full DOM parser, for speed and to avoid heavy dependencies in the serverless runtime. Specifically:
-•	Meta tags are read via regex matching both attribute orders (name=...content=... and content=...name=...).
-•	HTML entities (&amp;, &#x201C;, etc.) are decoded after extraction.
-•	Body text is produced by removing <script>, <style>, and <noscript> blocks first, then stripping remaining tags and collapsing whitespace.
-•	Related links are extracted from the #contentTopicos block, normalised to absolute URLs, and filtered to those containing a /YYYY/MM/DD/ date segment.
-7. Concurrency, politeness, and limits
-•	HTTP requests use a custom User-Agent identifying the bot.
-•	Article fetches run with 10 concurrent workers per pass.
-•	DuckDuckGo pagination is sequential per keyword with a 250 ms delay.
-•	Per-search caps: maxScrapes (5–500, default 200) for the first pass; the same cap is reused for the related pass.
-•	Failed fetches are counted and reported in the result stats but never abort the search.
-8. What the user sees
-After a search, the UI displays:
-•	A results table: title, author, date, where the match was found, and a link to open the article.
-•	A statistics line showing: DuckDuckGo hits, sitemaps scanned, URLs in range, slug-matches, articles scraped, related articles scraped and matched, and total matches.
-•	An “Export Excel” button that produces a .xlsx file with URL, title, author, and date for every result.
-9. Known limitations
-•	DuckDuckGo's HTML endpoint is unofficial. If it ever blocks the request, recall drops to sitemap-slug-matches plus the related-article expansion of those.
-•	Articles where the keyword appears only in body text and that are not linked from any other in-range article will be missed unless DuckDuckGo has indexed them.
-•	Related-article expansion follows only one hop. Articles two or more hops away are not reached.
-•	rr.pt topic landing pages (e.g. /topico/sexualidade) currently return 404, so they cannot be used as seed lists.
-•	Author extraction depends on meta tags or a “Por <Name>” pattern; some older articles may have an empty author field.
-10. End-to-end example
-Search: keyword “sexualidade”, range 19 Oct 2024 – 23 Nov 2024.
-1.	Stage 1a — DuckDuckGo returns ~12 rr.pt URLs containing “sexualidade” in title or body.
-2.	Stage 1b — Sitemaps for 2024-10 and 2024-11 are downloaded; ~16,000 URLs in range; slug-match filter keeps ~1 URL containing the literal keyword in the slug.
-3.	Stage 2 — Lists are merged, deduped, and capped: ~12 candidates.
-4.	Stage 3 — Each is fetched, verified, and dated; ~10–12 confirmed matches survive.
-5.	Stage 4 — Each match's Saiba Mais block contributes ~15–20 related URLs. After date and dedupe filters, ~50–100 remain. They are scraped; a handful (e.g. the Montenegro / cidadania article that links to sexualidade pieces) match and are added.
-6.	Final result: roughly 12–20 articles, all inside the requested date window, sorted newest first.
+
+Downloads the HTML.
+Extracts title from <meta property="og:title"> (with fallbacks).
+Extracts description from og:description / name="description" / twitter:description.
+Extracts publish date from article:published_time and similar meta tags, falling back to the URL date.
+Extracts author from author / article:author meta tags, with a "Por " heuristic on the first 2,000 characters.
+Strips <script>, <style>, <noscript> and remaining tags to produce clean body text.
+It then runs matchQueryInText against four haystacks — title, description, URL slug, and body — and runs notTermsHit against the body/description haystack. An article passes only if:
+
+All AND terms in at least one OR-group appear in the haystack, AND
+No NOT terms appear in the body/description.
+Date is then re-checked against the requested range. Surviving articles are added to the result set with matchedIn indicating where the match was found.
+
+Stage 4 — Related-article expansion (one hop)
+Many rr.pt articles include a "Saiba Mais" / Tópicos block linking related stories. An article about educação cidadã may not literally contain "sexualidade" but link to articles that do — and rr.pt's own search treats those as matches.
+
+While scraping each first-pass article, the app extracts every link inside #contentTopicos. After the first pass:
+
+Already-scraped URLs are removed.
+URLs whose date segment falls outside the requested range are dropped before any fetch (the URL alone reveals its date).
+The remaining list is capped at maxScrapes.
+Each URL is fetched and verified through the same matchQueryInText + notTermsHit pipeline.
+Only one hop is followed — going deeper explodes the candidate set without meaningfully improving recall.
+
+5. Date-range guarantees
+Articles outside the requested range never reach the results. Two independent filters enforce this:
+
+Pre-fetch: URL date (parsed from /YYYY/MM/DD/) must fall inside the range. Failing URLs are dropped before any HTTP request.
+Post-fetch: the actual <meta article:published_time> is parsed and re-checked. Anything outside is discarded even if its URL date suggested otherwise.
+All date arithmetic uses UTC to avoid timezone drift on day boundaries.
+
+6. Matching rules
+Matching is case- and accent-insensitive. Query and haystack are normalised: lowercase + NFD + combining-mark removal. So Sexualidade, sexualidade, SEXUALIDADE all match the same way.
+
+Stem expansion: Portuguese abstract nouns ending in -idade / -idades are expanded to their adjective root. For example sexualidade → sexual. Variants shorter than 4 chars are discarded to avoid noise. Stem expansion applies only to single bare words — never to phrases or operator clauses.
+
+Phrase matching: phrases are matched as substrings of the normalised haystack (with word boundaries handled by the surrounding context).
+
+NOT terms cause rejection only when found in body or description — never when matched solely in slug or title (which are too short to safely exclude on).
+
+7. HTML parsing
+Parsing uses regular expressions rather than a DOM parser, for speed and to keep the serverless runtime light:
+
+Meta tags read via regex matching both attribute orders (name=…content=… and content=…name=…).
+HTML entities (&amp;, &#x201C;, …) decoded after extraction.
+Body text produced by removing <script>, <style>, <noscript>, then stripping remaining tags and collapsing whitespace.
+Related links extracted from #contentTopicos, normalised to absolute URLs, filtered to those containing a /YYYY/MM/DD/ segment.
+8. Concurrency, politeness, and limits
+Custom User-Agent identifying the bot.
+10 concurrent workers per scrape pass.
+DuckDuckGo pagination is sequential per OR-group with a 250 ms delay.
+maxScrapes (5–500, default 200) caps the first pass; the same cap is reused for the related pass.
+Failed fetches are counted in the result stats but never abort the search.
+9. The user interface
+Query input: comma-separated. Helper text and chips show how each query was parsed.
+Date pickers: text input accepts yyyy-MM-dd, dd/MM/yyyy, or dd-MM-yyyy; the popover calendar supports month and year dropdown navigation for fast jumps across years.
+Max scrapes: numeric input (5–500).
+Results table: title, author, date, where the match was found, link to the article.
+Stats line: DuckDuckGo hits, sitemaps scanned, URLs in range, slug-matches, articles scraped, related articles scraped and matched, total matches, plus the parsed-query summary for each input query.
+Export Excel: produces a .xlsx with URL, title, author, and date for every result.
+10. Performance characteristics
+Single-word queries: same speed as before — one DDG search + sitemap pass.
+Default phrase queries (aulas de cidadania): same speed as a single keyword, but much more precise.
+Explicit AND across common words: ~2× scrape volume, mitigated by stopword stripping and the slug pre-filter.
+OR queries: linear in the number of OR clauses, capped at 4.
+Related-article expansion: unchanged; benefits more from richer queries.
+11. Known limitations
+DuckDuckGo's HTML endpoint is unofficial. If it ever blocks requests, recall drops to sitemap-slug-matches plus their related-article expansion.
+Body-only matches not in DDG's index and not linked from any other in-range article will be missed.
+Related-article expansion follows only one hop. Articles two or more hops away are not reached.
+rr.pt topic landing pages (e.g. /topico/sexualidade) currently return 404 and cannot be used as seed lists.
+Author extraction depends on meta tags or a "Por " pattern; some older articles may have an empty author field.
+Boolean grouping is flat OR-of-ANDs. Parentheses and nested grouping are not supported. No proximity (NEAR/n) or per-field qualifiers (title:cidadania).
+Phrase matching is substring-based on normalised text, so very short phrases inside longer words are theoretically possible (mitigated by the 4-char minimum on stem variants).
+12. End-to-end example
+Search: query "educação sexual" OR sexualidade NOT desporto, range 19 Oct 2024 – 23 Nov 2024.
+
+Discovery (DDG) — 2 OR-groups → 2 DDG queries (site:rr.pt "educação sexual" and site:rr.pt sexualidade). Returns ~20 unique rr.pt URLs.
+Discovery (sitemap) — Sitemaps for 2024-10 and 2024-11 fetched; ~16,000 in-range URLs; slug filter keeps a handful containing educacao-sexual or sexualidade in the slug.
+Candidate building — Merged + deduped + capped → ~25 candidates.
+Verification — Each fetched, parsed, and tested. Articles containing "desporto" anywhere in body/description are rejected. ~15 confirmed matches survive.
+Related-article expansion — Each match's Saiba Mais block contributes ~15–20 related URLs. After date and dedupe filters, ~80 remain. They are scraped and verified through the same matcher; a handful of additional matches are added.
+Final result — ~15–25 articles, all inside the requested window, all satisfying the boolean query, sorted newest first.

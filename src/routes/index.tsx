@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { format } from "date-fns";
 import { CalendarIcon, Download, Loader2, Search, Newspaper } from "lucide-react";
 import ExcelJS from "exceljs";

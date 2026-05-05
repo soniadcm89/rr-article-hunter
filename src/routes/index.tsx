@@ -60,30 +60,83 @@ function DatePick({
   setDate: (d?: Date) => void;
   placeholder: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(date ? format(date, "yyyy-MM-dd") : "");
+
+  // Keep text in sync when date changes externally
+  useState(() => {
+    setText(date ? format(date, "yyyy-MM-dd") : "");
+    return undefined;
+  });
+
+  const commitText = (val: string) => {
+    setText(val);
+    const t = val.trim();
+    if (!t) {
+      setDate(undefined);
+      return;
+    }
+    // Accept yyyy-MM-dd or dd/MM/yyyy or dd-MM-yyyy
+    let d: Date | null = null;
+    const iso = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    const dmy = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+    if (iso) {
+      d = new Date(+iso[1], +iso[2] - 1, +iso[3]);
+    } else if (dmy) {
+      const year = +dmy[3] < 100 ? +dmy[3] + 2000 : +dmy[3];
+      d = new Date(year, +dmy[2] - 1, +dmy[1]);
+    }
+    if (d && !isNaN(d.getTime())) setDate(d);
+  };
+
+  const currentYear = new Date().getFullYear();
+
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          className={cn(
-            "w-full justify-start text-left font-normal",
-            !date && "text-muted-foreground",
-          )}
-        >
-          <CalendarIcon className="mr-2 h-4 w-4" />
-          {date ? format(date, "PPP") : <span>{placeholder}</span>}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
-        <Calendar
-          mode="single"
-          selected={date}
-          onSelect={setDate}
-          initialFocus
-          className={cn("p-3 pointer-events-auto")}
-        />
-      </PopoverContent>
-    </Popover>
+    <div className="flex gap-2">
+      <Input
+        type="text"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={(e) => commitText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commitText((e.target as HTMLInputElement).value);
+          }
+        }}
+        placeholder={placeholder === "Any" ? "yyyy-mm-dd" : placeholder}
+        className="flex-1"
+      />
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon"
+            className="shrink-0"
+            aria-label="Open calendar"
+          >
+            <CalendarIcon className="h-4 w-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="start">
+          <Calendar
+            mode="single"
+            selected={date}
+            onSelect={(d) => {
+              setDate(d);
+              setText(d ? format(d, "yyyy-MM-dd") : "");
+              setOpen(false);
+            }}
+            captionLayout="dropdown"
+            fromYear={2000}
+            toYear={currentYear + 1}
+            defaultMonth={date}
+            initialFocus
+            className={cn("p-3 pointer-events-auto")}
+          />
+        </PopoverContent>
+      </Popover>
+    </div>
   );
 }
 

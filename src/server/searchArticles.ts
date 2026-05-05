@@ -508,8 +508,8 @@ export const searchArticles = createServerFn({ method: "POST" })
         inDateRange(dateFromUrl(u), startDate, endDate),
       );
       slugMatches = inRangeUrls.filter((u) => {
-        const slug = normalize(slugTextFromUrl(u));
-        return normKeywords.some((k) => slug.includes(k));
+        const slug = slugTextFromUrl(u);
+        return parsedQueries.some((p) => matchQueryInText(slug, p));
       });
     } catch (err) {
       console.error("sitemap fetch failed", err);

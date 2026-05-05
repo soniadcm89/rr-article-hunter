@@ -128,8 +128,8 @@ function DatePick({
               setOpen(false);
             }}
             captionLayout="dropdown"
-            fromYear={2000}
-            toYear={currentYear + 1}
+            startMonth={new Date(2000, 0)}
+            endMonth={new Date(currentYear + 1, 11)}
             defaultMonth={date}
             initialFocus
             className={cn("p-3 pointer-events-auto")}

@@ -63,11 +63,9 @@ function DatePick({
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(date ? format(date, "yyyy-MM-dd") : "");
 
-  // Keep text in sync when date changes externally
-  useState(() => {
+  useEffect(() => {
     setText(date ? format(date, "yyyy-MM-dd") : "");
-    return undefined;
-  });
+  }, [date]);
 
   const commitText = (val: string) => {
     setText(val);

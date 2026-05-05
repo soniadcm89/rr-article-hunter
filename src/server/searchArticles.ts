@@ -563,9 +563,12 @@ export const searchArticles = createServerFn({ method: "POST" })
             ];
             const matchedIn: string[] = [];
             for (const h of haystacks) {
-              if (matchKeywords(h.text, normKeywords).length) matchedIn.push(h.name);
+              if (parsedQueries.some((p) => matchQueryInText(h.text, p))) matchedIn.push(h.name);
             }
             if (!matchedIn.length) continue;
+            // NOT terms reject based on body/description content
+            const bodyHay = `${description} ${bodyText}`;
+            if (parsedQueries.some((p) => notTermsHit(bodyHay, p))) continue;
 
             const dateIso = getPublishDate(html, dateFromUrl(url));
             if (!inDateRange(dateIso, startDate, endDate)) continue;

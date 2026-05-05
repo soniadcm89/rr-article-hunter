@@ -471,11 +471,12 @@ export const searchArticles = createServerFn({ method: "POST" })
   .inputValidator(validate)
   .handler(async ({ data }): Promise<{ articles: Article[]; stats: any }> => {
     const { keywords, startDate, endDate, maxScrapes } = data;
-    const normKeywords = Array.from(new Set(keywords.flatMap(expandKeyword)));
+    const parsedQueries = keywords.map(parseQuery).filter((p) => p.orGroups.length > 0);
+    const ddgQueries = Array.from(new Set(parsedQueries.flatMap((p) => p.ddgQueries)));
 
-    /* 1. Discover URLs from DuckDuckGo (full-text) per keyword */
+    /* 1. Discover URLs from DuckDuckGo (full-text) per parsed query */
     const ddgResults = await Promise.all(
-      normKeywords.map((k) => ddgSearch(k).catch((err) => {
+      ddgQueries.map((k) => ddgSearch(k).catch((err) => {
         console.error("ddgSearch failed for", k, err);
         return [] as string[];
       })),
@@ -507,8 +508,8 @@ export const searchArticles = createServerFn({ method: "POST" })
         inDateRange(dateFromUrl(u), startDate, endDate),
       );
       slugMatches = inRangeUrls.filter((u) => {
-        const slug = normalize(slugTextFromUrl(u));
-        return normKeywords.some((k) => slug.includes(k));
+        const slug = slugTextFromUrl(u);
+        return parsedQueries.some((p) => matchQueryInText(slug, p));
       });
     } catch (err) {
       console.error("sitemap fetch failed", err);
@@ -562,9 +563,12 @@ export const searchArticles = createServerFn({ method: "POST" })
             ];
             const matchedIn: string[] = [];
             for (const h of haystacks) {
-              if (matchKeywords(h.text, normKeywords).length) matchedIn.push(h.name);
+              if (parsedQueries.some((p) => matchQueryInText(h.text, p))) matchedIn.push(h.name);
             }
             if (!matchedIn.length) continue;
+            // NOT terms reject based on body/description content
+            const bodyHay = `${description} ${bodyText}`;
+            if (parsedQueries.some((p) => notTermsHit(bodyHay, p))) continue;
 
             const dateIso = getPublishDate(html, dateFromUrl(url));
             if (!inDateRange(dateIso, startDate, endDate)) continue;
@@ -613,6 +617,7 @@ export const searchArticles = createServerFn({ method: "POST" })
         relatedMatched,
         matched: articles.length,
         fetchErrors,
+        parsedQueries: parsedQueries.map((p) => ({ raw: p.raw, summary: p.summary })),
       },
     };
   });

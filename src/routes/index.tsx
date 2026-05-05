@@ -94,7 +94,7 @@ function Index() {
   const [maxScrapes, setMaxScrapes] = useState(200);
   const [loading, setLoading] = useState(false);
   const [articles, setArticles] = useState<Article[]>([]);
-  const [stats, setStats] = useState<Record<string, number> | null>(null);
+  const [stats, setStats] = useState<Record<string, any> | null>(null);
   const [searched, setSearched] = useState(false);
 
   const handleSearch = async () => {
@@ -197,11 +197,25 @@ function Index() {
               <Label htmlFor="kw">Keywords</Label>
               <Input
                 id="kw"
-                placeholder="e.g. inflação, governo, Lisboa"
+                placeholder='e.g. inflação, "aulas de cidadania", cidadania AND escola'
                 value={keywordsInput}
                 onChange={(e) => setKeywordsInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}
               />
+              <p className="text-xs text-muted-foreground">
+                Comma-separated. Multi-word input is treated as an exact phrase. Use quotes for explicit phrases, and operators <code>AND</code>, <code>OR</code>, <code>NOT</code> for boolean logic.
+              </p>
+              {stats?.parsedQueries && Array.isArray(stats.parsedQueries) && stats.parsedQueries.length > 0 && (
+                <div className="flex flex-wrap gap-1 pt-1">
+                  {(stats.parsedQueries as Array<{ raw: string; summary: string[] }>).flatMap((p, i) =>
+                    p.summary.map((s, j) => (
+                      <span key={`${i}-${j}`} className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                        {s}
+                      </span>
+                    )),
+                  )}
+                </div>
+              )}
             </div>
             <div className="grid gap-4 md:grid-cols-3">
               <div className="space-y-2">
